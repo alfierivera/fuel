@@ -11,14 +11,6 @@
  */
 
 /**
- * Refuse to run oil when called from php-cgi !
- */
-if (substr(php_sapi_name(), 0, 3) == 'cgi')
-{
-    die("The use of oil is not supported when running php-cgi. Oil needs php-cli to function!\n\n");
-}
-
-/**
  * Set error reporting and display errors settings.  You will want to change these when in production.
  */
 error_reporting(-1);
@@ -51,9 +43,43 @@ defined('FUEL_START_MEM') or define('FUEL_START_MEM', memory_get_usage());
 // Boot the app
 require APPPATH.'bootstrap.php';
 
-Package::load('oil');
+// Generate the request, execute it and send the output.
+try
+{
+	$response = Request::forge()->execute()->response();
+}
+catch (HttpNotFoundException $e)
+{
+	$route = array_key_exists('_404_', Router::$routes) ? Router::$routes['_404_']->translation : Config::get('routes._404_');
 
-// Fire up the command line interfact
-Oil\Command::init($_SERVER['argv']);
+	if($route instanceof Closure)
+	{
+		$response = $route();
 
-/* End of file oil */
+		if( ! $response instanceof Response)
+		{
+			$response = Response::forge($response);
+		}
+	}
+	elseif ($route)
+	{
+		$response = Request::forge($route, false)->execute()->response();
+	}
+	else
+	{
+		throw $e;
+	}
+}
+
+// This will add the execution time and memory usage to the output.
+// Comment this out if you don't use it.
+$bm = Profiler::app_total();
+$response->body(
+	str_replace(
+		array('{exec_time}', '{mem_usage}'),
+		array(round($bm[0], 4), round($bm[1] / pow(1024, 2), 3)),
+		$response->body()
+	)
+);
+
+$response->send(true);
